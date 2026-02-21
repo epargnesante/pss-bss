@@ -1652,21 +1652,39 @@ const BSS = {
 
     // Valide un paquet de partage
     validateSharePackage: async (pkg) => {
+        /*
+         * Lors de la validation d'un paquet de partage provenant d'un autre signataire
+         * il faut vérifier deux éléments :
+         *  1. Le manifeste de l'accord n'a pas été modifié. On refait donc le hash
+         *     du JSON du manifeste et on le compare au hash présent dans l'objet.
+         *  2. Chaque signature doit être vérifiée par rapport au message exact qui a
+         *     été signé par l'autre partie. Ce message correspond au champ
+         *     `agreementHash` stocké dans le manifeste de la signature (il peut
+         *     s'agir du hash du manifeste seul ou d'un hash combiné incluant un
+         *     fichier, que le destinataire ne peut pas reconstruire sans le fichier).
+         */
         if (!pkg || pkg.type !== 'share.package') {
             return { valid: false, error: 'Format invalide' };
         }
 
-        // Recalculer le hash pour vérification
+        // Recalculer le hash du manifeste pour vérifier l'intégrité de l'accord
         const manifestString = JSON.stringify(pkg.agreement.manifest);
-        const calculatedHash = await Crypto.sha256(manifestString);
+        const manifestHash = await Crypto.sha256(manifestString);
 
-        if (calculatedHash !== pkg.agreement.hash) {
+        // Si le hash diffère, le manifeste a été modifié et l'accord est invalide
+        if (manifestHash !== pkg.agreement.hash) {
             return { valid: false, error: 'Hash invalide - accord potentiellement modifié' };
         }
 
-        // Vérifier les signatures existantes
+        // Vérifier que toutes les signatures présentes sont valides.
+        // On utilise le champ `agreementHash` stocké dans chaque manifeste de signature
+        // plutôt que le hash du manifeste seul : cela permet de valider des
+        // signatures qui incluent un fichier (hash combiné) sans avoir accès au fichier.
         for (const sig of pkg.agreement.signatures) {
-            const isValid = Crypto.verify(pkg.agreement.hash, sig.signature, sig.publicKey);
+            // Le message signé est soit le hash spécifique de la signature, soit, par
+            // compatibilité avec d'anciens paquets, le hash du manifeste.
+            const messageHash = sig.agreementHash || pkg.agreement.hash;
+            const isValid = Crypto.verify(messageHash, sig.signature, sig.publicKey);
             if (!isValid) {
                 return { valid: false, error: `Signature invalide pour ${Crypto.shortId(sig.publicKey)}` };
             }
@@ -6534,3 +6552,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
 </body>
 </html>
+
